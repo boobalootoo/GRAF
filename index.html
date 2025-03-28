@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Graffiti Game</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://unpkg.com/tone"></script>
     <style>
         body { margin: 0; overflow: hidden; }
         canvas { display: block; }
@@ -50,14 +49,17 @@
         let pointGeometry;
         let pointMaterial;
         let numPoints = 10;
-        let spraySynth;
         let handElement;
         let pickedCylinder = null;
         let originalCylinderParent = null;
         let originalCylinderPosition = null;
         let cylinders = [];
+        let isLeftMouseDown = false; // Track left mouse button state
+        let lastHandPosition = { x: 0, y: 0 };  // To track hand movement
+        let shakeTimeout;
+        let isShaking = false; //track shaking state
 
-        // Sound Effects (Tone.js)
+        // Sound Effects (Web Audio API)
         const soundFiles = {
             capOff: "https://boobalootoo.github.io/HANDS/200375__cbakos__spray-paint-cap-off.wav",
             spray: "https://boobalootoo.github.io/HANDS/460408__jay_you__spray-painting.wav",
@@ -65,24 +67,64 @@
             drop: "https://boobalootoo.github.io/HANDS/700149__piotrkier__dropping-spray-paint-can.wav"
         };
 
-        let soundEffects = {};
-        let toneInitialized = false; // Flag to track Tone.js initialization
-        let audioContext; // Declare audioContext
+        let soundBuffers = {};
+        let audioContext;
+        let sprayingSoundSource = null; // Keep track of the spray sound source
+        let shakingSoundSource = null;
+
+        function loadSound(url, callback) {
+            const request = new XMLHttpRequest();
+            request.open('GET', url, true);
+            request.responseType = 'arraybuffer';
+            request.onload = function () {
+                audioContext.decodeAudioData(request.response, callback, function (error) {
+                    console.error('Error decoding audio data:', error);
+                });
+            };
+            request.send();
+        }
 
         function playSound(soundName) {
-            if (toneInitialized && soundEffects[soundName]) {
-                const source = audioContext.createBufferSource(); // Create source node
-                source.buffer = soundEffects[soundName].buffer;       // Set buffer
-                source.connect(audioContext.destination);             // Connect to destination
-                source.start(0);                                   // Play immediately
+            if (soundBuffers[soundName]) {
+                const source = audioContext.createBufferSource();
+                source.buffer = soundBuffers[soundName];
+                source.connect(audioContext.destination);
+                source.start(0);
             }
         }
 
         function playSpraySound() {
-            if (toneInitialized && spraySynth) {
-                spraySynth.triggerAttackRelease("C4", "16n");
+            if (isLeftMouseDown) {
+                if (!sprayingSoundSource) {
+                    sprayingSoundSource = audioContext.createBufferSource();
+                    sprayingSoundSource.buffer = soundBuffers['spray'];
+                    sprayingSoundSource.loop = true;
+                    sprayingSoundSource.connect(audioContext.destination);
+                    sprayingSoundSource.start(0);
+                }
+            } else {
+                if (sprayingSoundSource) {
+                    sprayingSoundSource.stop();
+                    sprayingSoundSource = null;
+                }
             }
-            playSound('spray');
+        }
+
+        function playShakingSound() {
+            if (isShaking) {
+                if (!shakingSoundSource) {
+                    shakingSoundSource = audioContext.createBufferSource();
+                    shakingSoundSource.buffer = soundBuffers['shake'];
+                    shakingSoundSource.loop = true;
+                    shakingSoundSource.connect(audioContext.destination);
+                    shakingSoundSource.start(0);
+                }
+            } else {
+                if (shakingSoundSource) {
+                    shakingSoundSource.stop();
+                    shakingSoundSource = null;
+                }
+            }
         }
 
         function init() {
@@ -183,23 +225,19 @@
             pointGeometry = new THREE.PlaneGeometry(0.05, 0.05);
             pointMaterial = new THREE.MeshBasicMaterial({ color: currentColor });
 
-            // Initialize Tone.js and set up audio context
-            try {
-                Tone.start();
-                spraySynth = new Tone.Synth().toDestination();
-                toneInitialized = true;
-                audioContext = Tone.getContext().rawContext; // Get the raw AudioContext
-            } catch (error) {
-                console.error("Tone.js initialization error:", error);
-                spraySynth = null;
-                toneInitialized = false;
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+            // Load sound effects
+            for (const key in soundFiles) {
+                loadSound(soundFiles[key], function (buffer) {
+                    soundBuffers[key] = buffer;
+                });
             }
 
             handElement = document.getElementById('hand');
             if (handElement) {
                 handElement.style.display = 'block';
             }
-
 
             // Add cylinders to the scene
             const cylinderGeometry = new THREE.CylinderGeometry(0.2, 0.2, 1, 32);
@@ -210,19 +248,6 @@
                 cylinder.position.set(4 + (i * 0.2 - 0.2), 1.5, -2);
                 scene.add(cylinder);
                 cylinders.push(cylinder);
-            }
-
-            // Load sound effects
-            if (toneInitialized) {
-                for (const key in soundFiles) {
-                    fetch(soundFiles[key])
-                        .then(response => response.arrayBuffer())
-                        .then(arrayBuffer => audioContext.decodeAudioData(arrayBuffer)) // Use audioContext
-                        .then(audioBuffer => {
-                            soundEffects[key] = { buffer: audioBuffer }; // Store as { buffer: AudioBuffer }
-                        })
-                        .catch(error => console.error(`Error loading sound ${key}:`, error));
-                }
             }
 
             // Event Listeners
@@ -264,22 +289,26 @@
             });
 
             document.addEventListener('mousedown', (e) => {
+                if (e.button === 0) { // Left mouse button
+                    isLeftMouseDown = true;
+                    isDrawing = true;
+                    spray(e.clientX, e.clientY);
+                    playSpraySound();
+                }
                 if (e.button === 2) {  // Right click - now just prevents context menu
                     e.preventDefault();
                     return;
                 }
-
-                isDrawing = true;
-                spray(e.clientX, e.clientY);
             });
 
             document.addEventListener('mouseup', (e) => {
-                 if (e.button === 2 && pickedCylinder) {
-                    // Keep cylinder in hand - don't release it yet.  Do nothing on right-click up.
-                    return;
-                }
-                else {
+                if (e.button === 0) { // Left mouse button
+                    isLeftMouseDown = false;
                     isDrawing = false;
+                    playSpraySound(); // Stop spray sound when left mouse button is released
+                }
+                if (e.button === 2 && pickedCylinder) {
+                    return;
                 }
             });
 
@@ -290,6 +319,8 @@
 
             document.addEventListener('mouseout', () => {
                 isDrawing = false;
+                isLeftMouseDown = false;
+                playSpraySound();
             });
 
             window.addEventListener('resize', () => {
@@ -303,7 +334,7 @@
 
         function handlePickupOrDrop(event) {
             if (pickedCylinder) {
-                pickedCylinder = null; // Drop the cylinder
+                pickedCylinder = null;
                 playSound('drop');
                 return;
             }
@@ -323,10 +354,42 @@
 
         function updateHandPosition(event) {
             if (!event) return;
+            const currentHandPosition = { x: event.clientX, y: event.clientY };
+            const handSpeed = Math.sqrt(
+                Math.pow(currentHandPosition.x - lastHandPosition.x, 2) +
+                Math.pow(currentHandPosition.y - lastHandPosition.y, 2)
+            );
+
+            if (pickedCylinder && !isLeftMouseDown && handSpeed > 30) { // Increased sensitivity to 30
+                if (!isShaking) {
+                    isShaking = true;
+                    playShakingSound();
+                }
+                // Clear timeout if it exists
+                if (shakeTimeout) {
+                    clearTimeout(shakeTimeout);
+                }
+                //reset last position
+                shakeTimeout = setTimeout(() => {
+                    lastHandPosition = {x: currentHandPosition.x, y: currentHandPosition.y};
+                    isShaking = false;
+                    playShakingSound();
+                }, 200);
+
+            }
+            else{
+                 lastHandPosition = { x: event.clientX, y: event.clientY };
+                 if(isShaking){
+                    isShaking = false;
+                    playShakingSound();
+                 }
+            }
+
+
             handElement.style.left = `${event.clientX - handElement.offsetWidth / 2}px`;
             handElement.style.top = `${event.clientY - handElement.offsetHeight / 2}px`;
 
-             if (pickedCylinder) {
+            if (pickedCylinder) {
                 let vector = new THREE.Vector3(
                     (event.clientX / window.innerWidth) * 2 - 1,
                     -(event.clientY / window.innerHeight) * 2 + 1,
