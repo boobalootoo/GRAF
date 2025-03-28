@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Play Sound Files</title>
+    <script src="https://unpkg.com/tone"></script>
+    <style>
+      body {
+        font-family: sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        background-color: #f0f0f0;
+      }
+      .button-container {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 20px;
+      }
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+      }
+    </style>
+</head>
+<body>
+    <h1>Play Sound Files</h1>
+    <div class="button-container">
+        <button id="capOffButton">Play Cap Off Sound</button>
+        <button id="sprayButton">Play Spray Sound</button>
+        <button id="shakeButton">Play Shake Sound</button>
+        <button id="dropButton">Play Drop Sound</button>
+    </div>
+    <script>
+        const capOffButton = document.getElementById('capOffButton');
+        const sprayButton = document.getElementById('sprayButton');
+        const shakeButton = document.getElementById('shakeButton');
+        const dropButton = document.getElementById('dropButton');
+
+        const soundFiles = {
+    capOff: "https://boobalootoo.github.io/HANDS/200375__cbakos__spray-paint-cap-off.wav",
+    spray: "https://boobalootoo.github.io/HANDS/460408__jay_you__spray-painting.wav",
+    shake: "https://boobalootoo.github.io/HANDS/523005__dobroide__20200502spraycanshake.wav",
+    drop: "https://boobalootoo.github.io/HANDS/700149__piotrkier__dropping-spray-paint-can.wav"
+};
+
+        async function playSound(url) {
+            try {
+                const audioContext = new AudioContext();
+                const response = await fetch(url);
+                if (!response.ok) {
+                    const text = await response.text(); // Get the error text
+                    throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText} - ${text}`);
+                }
+                const arrayBuffer = await response.arrayBuffer();
+                try {
+                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    const source = audioContext.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(audioContext.destination);
+                    source.start();
+                } catch (decodeError) {
+                    console.error("Error decoding audio data:", decodeError);
+                    throw new Error(`Error decoding audio data: ${decodeError.message || decodeError}`); // Wrap
+                }
+            } catch (error) {
+                console.error("Error playing sound:", error);
+            }
+        }
+
+        capOffButton.addEventListener('click', () => playSound(soundFiles.capOff));
+        sprayButton.addEventListener('click', () => playSound(soundFiles.spray));
+        shakeButton.addEventListener('click', () => playSound(soundFiles.shake));
+        dropButton.addEventListener('click', () => playSound(soundFiles.drop));
+    </script>
+</body>
+</html>
